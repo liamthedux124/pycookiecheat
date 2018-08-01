@@ -14,10 +14,12 @@ Adapted from my code at http://n8h.me/HufI1w
 import pathlib
 import sqlite3
 import sys
+import os
 import urllib.error
 import urllib.parse
 from hashlib import pbkdf2_hmac
 from typing import Any, Dict, Iterator, Union  # noqa
+import win32crypt
 
 import keyring
 from Crypto.Cipher import AES
@@ -87,6 +89,28 @@ def get_osx_config(browser: str) -> dict:
         'iterations': 1003,
         'cookie_file': cookie_file,
         }
+    return config
+
+def get_win32_config(browser: str) -> dict:
+    """Get the settings for Chrome cookies on win32.
+
+    Args:
+        browser: Either "Chrome"
+    Returns:
+        Config dictionary for Chrome cookie decryption
+
+    """
+    # Verify supported browser, fail early otherwise
+    if browser.lower() == 'chrome':
+        cookie_file = os.getenv("APPDATA") + r'\..\Local\Google\Chrome\User Data\Default\Cookies'
+    else:
+        raise ValueError("Browser must be Chrome.")
+
+    config = {
+        'my_pass': 'peanuts',
+        'iterations': 1,
+        'cookie_file': cookie_file,
+    }
     return config
 
 
@@ -169,8 +193,10 @@ def chrome_cookies(
         config = get_osx_config(browser)
     elif sys.platform.startswith('linux'):
         config = get_linux_config(browser)
+    elif sys.platform.startswith('win32'):
+        config = get_win32_config(browser)
     else:
-        raise OSError("This script only works on OSX or Linux.")
+        raise OSError("This script only works on OSX, win32 or Linux.")
 
     config.update({
         'init_vector': b' ' * 16,
@@ -196,7 +222,8 @@ def chrome_cookies(
         raise urllib.error.URLError("You must include a scheme with your URL.")
 
     try:
-        conn = sqlite3.connect(cookie_file)
+        # Open in RO mode, this is to allow opening Cookies on win32 when chrome is opened.
+        conn = sqlite3.connect('file:'+cookie_file + "?mode=ro", uri=True)
     except sqlite3.OperationalError:
         print("Unable to connect to cookie_file at: {}\n".format(cookie_file))
         raise
@@ -219,13 +246,18 @@ def chrome_cookies(
     for host_key in generate_host_keys(domain):
         for hk, path, is_secure, expires_utc, cookie_key, val, enc_val \
                 in conn.execute(sql, (host_key,)):
-            # if there is a not encrypted value or if the encrypted value
-            # doesn't start with the 'v1[01]' prefix, return v
-            if val or (enc_val[:3] not in (b'v10', b'v11')):
-                pass
+
+            if sys.platform.startswith('win32'):
+                val = win32crypt.CryptUnprotectData(enc_val, None, None, None, 0)[1].decode(
+                    'utf-8') or value or 0
             else:
-                val = chrome_decrypt(enc_val, key=enc_key,
-                                     init_vector=config['init_vector'])
+                # if there is a not encrypted value or if the encrypted value
+                # doesn't start with the 'v1[01]' prefix, return v
+                if val or (enc_val[:3] not in (b'v10', b'v11')):
+                    pass
+                else:
+                    val = chrome_decrypt(enc_val, key=enc_key,
+                                         init_vector=config['init_vector'])
             cookies[cookie_key] = val
             if curl_cookie_file:
                 # http://www.cookiecentral.com/faq/#3.5
