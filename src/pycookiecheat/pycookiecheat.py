@@ -230,8 +230,19 @@ def chrome_cookies(
 
     # Check whether the column name is `secure` or `is_secure`
     secure_column_name = 'is_secure'
+
+    # DB is sometimes locked under win32, so we need to do some more tries.
+    # exception thrown when its locked: sqlite3.OperationalError: database is locked
+    for tries in range(10):
+        try:
+            cookies_table_info = conn.execute('PRAGMA table_info(cookies)')
+            break
+        except BaseException as error:
+            print('An exception at try {} occurred: {}'.format(tries, error))
+            time.sleep(tries * 10)
+
     for sl_no, column_name, data_type, is_null, default_val, pk \
-            in conn.execute('PRAGMA table_info(cookies)'):
+            in cookies_table_info:
         if column_name == 'secure':
             secure_column_name = 'secure'
             break
