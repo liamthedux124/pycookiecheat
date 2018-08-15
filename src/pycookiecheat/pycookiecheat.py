@@ -260,7 +260,9 @@ def chrome_cookies(
 
             if sys.platform.startswith('win32'):
                 val = win32crypt.CryptUnprotectData(enc_val, None, None, None, 0)[1].decode(
-                    'utf-8') or value or 0
+                    'utf-8')
+                if not val:
+                    pass
             else:
                 # if there is a not encrypted value or if the encrypted value
                 # doesn't start with the 'v1[01]' prefix, return v
